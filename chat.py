@@ -1,6 +1,5 @@
 import streamlit as st
 import google.generativeai as genai
-from lk20_data import hent_kunnskapsprofil 
 
 # ==========================================
 # 1. API OG KONFIGURASJON
@@ -19,13 +18,14 @@ except Exception as e:
 st.set_page_config(page_title="LK20-Simulator", layout="wide", page_icon="🎓")
 
 # ==========================================
-# 2. FINN TILGJENGELIGE MODELLER (AUTO-PILOT)
+# 2. AUTO-PILOT (Modellvelger)
 # ==========================================
 @st.cache_data
 def finn_tilgjengelige_modeller():
     try:
         alle = genai.list_models()
         chat_modeller = [m.name for m in alle if 'generateContent' in m.supported_generation_methods]
+        # Sorterer slik at Flash (rask/gratis) kommer først
         chat_modeller.sort(key=lambda x: "flash" not in x) 
         return chat_modeller
     except Exception as e:
@@ -34,17 +34,19 @@ def finn_tilgjengelige_modeller():
 mine_modeller = finn_tilgjengelige_modeller()
 
 # ==========================================
-# 3. SIDEBAR MED INNSTILLINGER
+# 3. SIDEBAR
 # ==========================================
 with st.sidebar:
     st.header("🔧 Teknisk")
     valgt_modell = st.selectbox("Aktiv AI-modell:", mine_modeller, index=0)
-    st.caption("Tips: Bytt modell her hvis du får feilmelding.")
 
     st.divider()
-    st.header("🎓 Pedagogisk")
-    alle_trinn = [f"{i}. trinn" for i in range(1, 11)]
-    trinn = st.selectbox("Velg klassetrinn:", alle_trinn, index=4) 
+    st.header("🎓 Pedagogisk (LK20)")
+    
+    # Vi bruker tallverdier for trinnet for å kunne regne med dem
+    trinn_valg = st.slider("Velg klassetrinn:", min_value=1, max_value=10, value=5)
+    trinn_tekst = f"{trinn_valg}. trinn"
+    
     begrep = st.text_input("Tema:", "Brøk")
     
     if st.button("Nullstill samtale", use_container_width=True):
@@ -57,40 +59,40 @@ with st.sidebar:
     st.subheader("👩‍🏫 Veileder")
     if st.button("Gi meg tilbakemelding", type="primary", use_container_width=True):
         st.session_state.be_om_veiledning = True
-
-    with st.expander("Se elevens hjerne"):
-        data = hent_kunnskapsprofil(trinn)
-        st.write(f"**Kan:** {data['kjent']}")
-        st.write(f"**Lærer:** {data['laerer_naa']}")
+    
+    st.info(f"Eleven simuleres nå basert på LK20 kompetansemål for {trinn_tekst}.")
 
 # ==========================================
-# 4. ELEV-PERSONA (OPPDATERT: MER PASSIV)
+# 4. GENERER "HJERNE" BASERT PÅ LK20
 # ==========================================
-profil = hent_kunnskapsprofil(trinn)
-
+# Her ber vi AI-en definere eleven basert på sin egen kunnskap om LK20
 system_instruks_elev = f"""
-DU ER EN ELEV PÅ {trinn}.
-Tema: '{begrep}'.
+DIN ROLLE:
+Du er en elev i norsk grunnskole som går på {trinn_tekst}.
+Vi simulerer en undervisningssituasjon om temaet '{begrep}'.
 
-DIN KUNNSKAP:
-1. DU KAN: {profil['kjent']}
-2. DU LÆRER NÅ: {profil['laerer_naa']}
-3. UKJENT: Alt annet.
+DIN KUNNSKAPSBASIS (VIKTIG):
+Du skal basere din kunnskap og forståelse STRENGT på **Læreplan i matematikk fellesfag (MAT01-05) fra LK20**.
 
-DINE INSTRUKSJONER (Viktig!):
-- Du vet IKKE hva '{begrep}' er (med mindre det står under "DU KAN").
-- **IKKE driv samtalen fremover.** Det er lærerens jobb. Du skal bare reagere.
-- **IKKE still "høflige" spørsmål tilbake.** (F.eks: Aldri spør "Hva synes du?", "Hva liker du?", "Enn du?").
-- Hvis læreren sier noe du ikke forstår, spør: "Hva betyr det?" eller "Jeg skjønner ikke".
-- Hvis læreren sier "Brøk er gøy", svar: "Ok?" eller "Hvorfor det?", men IKKE spør "Hva liker du best med brøk?".
-- Vær litt passiv. La læreren jobbe for å få deg til å forstå.
-- Snakk norsk. Kort og greit.
+1. **Hva du kan:** Du behersker kompetansemålene for alle trinn opp til og med {trinn_valg - 1}. trinn.
+2. **Hva du lærer nå:** Du jobber med kompetansemålene for {trinn_tekst}. Dette er din "sone for den nærmeste utvikling". Du kan dette litt, men er usikker.
+3. **Hva du IKKE kan:** Du kjenner IKKE til begreper eller metoder som tilhører kompetansemålene for {trinn_valg + 1}. trinn eller høyere. Hvis læreren bruker slike begreper, må du bli forvirret.
+
+DINE INSTRUKSJONER FOR OPPFØRSEL:
+- Du vet IKKE hva '{begrep}' er med mindre det er tydelig dekket i kompetansemålene for lavere trinn.
+- **Vær passiv:** Ikke driv samtalen. Læreren må lede.
+- **Ikke vær "flinkis":** Ikke still pedagogiske spørsmål tilbake til læreren (f.eks. "Hva synes du om brøk?").
+- **Reager:** Hvis læreren forklarer bra (tilpasset ditt LK20-nivå), vis forståelse. Hvis læreren bruker ord fra høyere trinn, spør "Hva betyr det?".
+- Språk: Snakk naturlig norsk tilpasset en alder av {trinn_valg + 6} år.
+
+Eksempel på nivå-sjekk:
+Hvis du går på 5. trinn og læreren snakker om "ukjent x" (algebra), skal du si "Hva er x? Det har vi ikke lært". (Fordi algebra kommer senere i LK20).
 """
 
 # ==========================================
 # 5. CHAT
 # ==========================================
-st.title(f"Forklar '{begrep}' til en elev på {trinn}")
+st.title(f"Undervisning: {begrep} ({trinn_tekst})")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -125,21 +127,28 @@ if prompt := st.chat_input("Start undervisningen..."):
             st.error(f"Feilmelding: {e}")
             if "429" in str(e):
                 st.warning("⚠️ Kvote full. Bytt modell i menyen!")
-            elif "404" in str(e):
-                st.warning("⚠️ Modellen finnes ikke. Bytt i menyen.")
 
 # ==========================================
-# 6. VEILEDER
+# 6. VEILEDER (MED LK20-FOKUS)
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
     with st.chat_message("assistant", avatar="📝"):
-        st.subheader("Pedagogisk Vurdering")
-        with st.spinner("Analyserer..."):
+        st.subheader("Pedagogisk Vurdering (LK20)")
+        with st.spinner("Sjekker mot læreplanen..."):
             
             veileder_instruks = f"""
-            Du er praksisveileder. Analyser samtalen om '{begrep}' for {trinn}.
-            Vurder språkbruk, elevinvolvering og forståelse. Vær kort og konkret.
+            Du er en streng praksisveileder. 
+            Analyser samtalen basert på **LK20 (Læreplan i matematikk)**.
+            
+            Eleven går på {trinn_tekst}.
+            Tema: {begrep}.
+
+            Sjekk spesielt:
+            1. **Nivå:** Traff studenten riktig kompetansemål for {trinn_tekst}? (Eller ble det for vanskelig/lett?)
+            2. **Progresjon:** Bygget studenten på kunnskap fra lavere trinn?
+            
+            Gi en kort, faglig tilbakemelding.
             """
             
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
