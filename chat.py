@@ -6,7 +6,6 @@ from lk20_data import hent_kunnskapsprofil
 # 1. API OG KONFIGURASJON
 # ==========================================
 try:
-    # Sjekker både secrets.toml (lokalt) og Streamlit Cloud secrets
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
         genai.configure(api_key=api_key)
@@ -24,19 +23,14 @@ st.set_page_config(page_title="LK20-Simulator", layout="wide", page_icon="🎓")
 # ==========================================
 @st.cache_data
 def finn_tilgjengelige_modeller():
-    """Spør Google: Hvilke modeller har jeg lov til å bruke?"""
     try:
         alle = genai.list_models()
-        # Vi vil bare ha de som kan chatte (generateContent)
         chat_modeller = [m.name for m in alle if 'generateContent' in m.supported_generation_methods]
-        
-        # Sorter slik at "flash" (rask/gratis) kommer øverst
         chat_modeller.sort(key=lambda x: "flash" not in x) 
         return chat_modeller
     except Exception as e:
-        return ["models/gemini-1.5-flash"] # Fallback hvis listen feiler
+        return ["models/gemini-1.5-flash"]
 
-# Hent listen én gang
 mine_modeller = finn_tilgjengelige_modeller()
 
 # ==========================================
@@ -44,9 +38,8 @@ mine_modeller = finn_tilgjengelige_modeller()
 # ==========================================
 with st.sidebar:
     st.header("🔧 Teknisk")
-    # Her kan du velge modell selv hvis den automatiske feiler!
     valgt_modell = st.selectbox("Aktiv AI-modell:", mine_modeller, index=0)
-    st.caption("Tips: Bytt modell her hvis du får 404 eller 429 feil.")
+    st.caption("Tips: Bytt modell her hvis du får feilmelding.")
 
     st.divider()
     st.header("🎓 Pedagogisk")
@@ -65,14 +58,13 @@ with st.sidebar:
     if st.button("Gi meg tilbakemelding", type="primary", use_container_width=True):
         st.session_state.be_om_veiledning = True
 
-    # Debug-info
     with st.expander("Se elevens hjerne"):
         data = hent_kunnskapsprofil(trinn)
         st.write(f"**Kan:** {data['kjent']}")
         st.write(f"**Lærer:** {data['laerer_naa']}")
 
 # ==========================================
-# 4. ELEV-PERSONA
+# 4. ELEV-PERSONA (OPPDATERT: MER PASSIV)
 # ==========================================
 profil = hent_kunnskapsprofil(trinn)
 
@@ -85,11 +77,14 @@ DIN KUNNSKAP:
 2. DU LÆRER NÅ: {profil['laerer_naa']}
 3. UKJENT: Alt annet.
 
-REGLER:
+DINE INSTRUKSJONER (Viktig!):
 - Du vet IKKE hva '{begrep}' er (med mindre det står under "DU KAN").
-- ALDRI undervis læreren.
-- Vær nysgjerrig, still spørsmål.
-- Snakk norsk.
+- **IKKE driv samtalen fremover.** Det er lærerens jobb. Du skal bare reagere.
+- **IKKE still "høflige" spørsmål tilbake.** (F.eks: Aldri spør "Hva synes du?", "Hva liker du?", "Enn du?").
+- Hvis læreren sier noe du ikke forstår, spør: "Hva betyr det?" eller "Jeg skjønner ikke".
+- Hvis læreren sier "Brøk er gøy", svar: "Ok?" eller "Hvorfor det?", men IKKE spør "Hva liker du best med brøk?".
+- Vær litt passiv. La læreren jobbe for å få deg til å forstå.
+- Snakk norsk. Kort og greit.
 """
 
 # ==========================================
@@ -112,7 +107,6 @@ if prompt := st.chat_input("Start undervisningen..."):
 
     with st.chat_message("assistant", avatar="🧒"):
         try:
-            # Bruker modellen du valgte i menyen!
             model = genai.GenerativeModel(
                 model_name=valgt_modell, 
                 system_instruction=system_instruks_elev
@@ -130,9 +124,9 @@ if prompt := st.chat_input("Start undervisningen..."):
         except Exception as e:
             st.error(f"Feilmelding: {e}")
             if "429" in str(e):
-                st.warning("⚠️ Kvote full for denne modellen. Prøv å bytte modell i menyen til venstre!")
+                st.warning("⚠️ Kvote full. Bytt modell i menyen!")
             elif "404" in str(e):
-                st.warning("⚠️ Denne modellen finnes ikke. Velg en annen i menyen.")
+                st.warning("⚠️ Modellen finnes ikke. Bytt i menyen.")
 
 # ==========================================
 # 6. VEILEDER
@@ -151,7 +145,6 @@ if st.session_state.get("be_om_veiledning", False):
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
             try:
-                # Bruker samme modell som chatten
                 veileder_model = genai.GenerativeModel(model_name=valgt_modell, system_instruction=veileder_instruks)
                 analyse = veileder_model.generate_content(f"Logg:\n{logg}")
                 st.markdown(analyse.text)
