@@ -18,35 +18,26 @@ except Exception as e:
 st.set_page_config(page_title="LK20-Simulator", layout="wide", page_icon="🎓")
 
 # ==========================================
-# 2. TVUNGEN MODELL-LISTE (FIX)
+# 2. HENT FAKTISKE MODELLER (INGEN FILTRERING)
 # ==========================================
 @st.cache_data
-def finn_tilgjengelige_modeller():
-    """
-    Lager en liste over modeller. Vi legger manuelt til de viktigste
-    slik at de vises selv om API-et skjuler dem.
-    """
-    # 1. Dette er modellene vi VIL bruke (Prioritert rekkefølge)
-    mine_favoritter = [
-        "models/gemini-1.5-flash",          # Arbeidshesten (Høy kvote)
-        "models/gemini-1.5-flash-latest",   # Alternativ versjon
-        "models/gemini-2.0-flash-exp",      # Ny og rask (men kanskje lav kvote)
-        "models/gemini-1.5-pro",            # Smart, men tregere
-    ]
-    
-    # 2. Prøv å hente listen fra Google også (i tilfelle du har tilgang til noe spesielt)
+def hent_alle_modeller():
+    """Henter absolutt alt nøkkelen din har tilgang til."""
     try:
         alle = genai.list_models()
-        for m in alle:
-            if 'generateContent' in m.supported_generation_methods:
-                if m.name not in mine_favoritter:
-                    mine_favoritter.append(m.name)
-    except:
-        pass # Hvis internett feiler, bruker vi bare favoritt-listen
+        # Vi tar med alt som støtter 'generateContent'
+        tilgjengelige = [m.name for m in alle if 'generateContent' in m.supported_generation_methods]
         
-    return mine_favoritter
+        # Hvis listen er tom, legger vi til gammel klassiker som backup
+        if not tilgjengelige:
+            return ["models/gemini-pro"] 
+            
+        return tilgjengelige
+    except Exception as e:
+        st.error(f"Klarte ikke hente liste: {e}")
+        return ["models/gemini-pro"]
 
-mine_modeller = finn_tilgjengelige_modeller()
+mine_modeller = hent_alle_modeller()
 
 # ==========================================
 # 3. SIDEBAR
@@ -54,18 +45,17 @@ mine_modeller = finn_tilgjengelige_modeller()
 with st.sidebar:
     st.header("🔧 Teknisk")
     
-    # Her velger du modellen. Prøv den øverste først!
-    valgt_modell = st.selectbox("Aktiv AI-modell:", mine_modeller, index=0)
+    # VISER ALT RÅTT - Velg det som ser ut som "flash" eller "pro"
+    valgt_modell = st.selectbox("Velg modell (Din liste):", mine_modeller)
     
-    st.info(f"**Valgt:** {valgt_modell}\n\nTips: Hvis den øverste feiler (404/429), prøv neste i listen.")
+    st.info(f"Du bruker nå: **{valgt_modell}**")
+    st.caption("Tips: Prøv en annen i listen hvis du får feilmelding.")
 
     st.divider()
     st.header("🎓 Pedagogisk (LK20)")
     
-    # Slider for trinn
     trinn_valg = st.slider("Velg klassetrinn:", min_value=1, max_value=10, value=5)
     trinn_tekst = f"{trinn_valg}. trinn"
-    
     begrep = st.text_input("Tema:", "Brøk")
     
     if st.button("Nullstill samtale", use_container_width=True):
@@ -80,7 +70,7 @@ with st.sidebar:
         st.session_state.be_om_veiledning = True
 
 # ==========================================
-# 4. HJERNE (LK20)
+# 4. HJERNE (LK20-SIMULERING)
 # ==========================================
 system_instruks_elev = f"""
 DIN ROLLE:
@@ -98,7 +88,7 @@ DINE INSTRUKSJONER:
 - **Vær passiv:** Ikke driv samtalen.
 - **Ikke still "sosiale" spørsmål** ("Hva synes du?", "Liker du matte?").
 - **Ikke forklar tilbake.**
-- Hvis læreren bruker ord fra høyere trinn (f.eks algebra på barneskolen), spør: "Hva betyr det?".
+- Hvis læreren bruker ord fra høyere trinn, spør: "Hva betyr det?".
 - Snakk som en på {trinn_valg}. trinn.
 """
 
@@ -122,7 +112,6 @@ if prompt := st.chat_input("Start undervisningen..."):
 
     with st.chat_message("assistant", avatar="🧒"):
         try:
-            # Bruker modellen du valgte i menyen
             model = genai.GenerativeModel(
                 model_name=valgt_modell, 
                 system_instruction=system_instruks_elev
@@ -141,9 +130,9 @@ if prompt := st.chat_input("Start undervisningen..."):
             feil = str(e)
             st.error(f"Feil med {valgt_modell}:")
             if "429" in feil:
-                st.warning("⚠️ Kvote full. Prøv en annen modell i menyen til venstre.")
+                st.warning("⚠️ Kvote full. Prøv en annen modell i menyen.")
             elif "404" in feil:
-                st.warning("⚠️ Denne modellen finnes ikke for din nøkkel. Prøv neste i listen.")
+                st.warning("⚠️ Modellen finnes ikke. Prøv en annen.")
             else:
                 st.warning(feil)
 
@@ -169,6 +158,6 @@ if st.session_state.get("be_om_veiledning", False):
                 analyse = veileder_model.generate_content(f"Logg:\n{logg}")
                 st.markdown(analyse.text)
             except Exception as e:
-                st.warning("Kunne ikke kjøre veileder (sannsynligvis pga kvote).")
+                st.warning("Kunne ikke kjøre veileder.")
     
     st.session_state.be_om_veiledning = False
