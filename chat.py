@@ -1,6 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 import random
+# HER IMPORTERER VI DEN NYE FILEN:
+from pedagogikk import hent_veileder_instruks 
 
 # ==========================================
 # 1. API OG KONFIGURASJON
@@ -64,7 +66,6 @@ with st.sidebar:
     trinn_valg = st.slider("Velg klassetrinn:", 1, 10, 5)
     begrep = st.text_input("Tema:", "Brøk")
 
-    # Sjekk om vi skal bytte elev (hvis trinn/tema endres)
     endring_skjedd = (trinn_valg != st.session_state.last_trinn) or (begrep != st.session_state.last_begrep)
     
     if endring_skjedd:
@@ -76,7 +77,6 @@ with st.sidebar:
         st.session_state.last_begrep = begrep
         st.rerun()
 
-    # Knapper
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Nullstill chat"):
@@ -97,11 +97,12 @@ with st.sidebar:
         st.session_state.be_om_veiledning = True
 
 # ==========================================
-# 5. HJERNE (SYSTEM PROMPT)
+# 5. HJERNE (SYSTEM PROMPT - ELEV)
 # ==========================================
 elev_navn = st.session_state.elev_navn
 trinn_tekst = f"{trinn_valg}. trinn"
 
+# (Du kan også flytte denne til pedagogikk.py hvis du vil ha det enda ryddigere!)
 system_instruks_elev = f"""
 DIN ROLLE:
 Du heter {elev_navn}.
@@ -125,9 +126,8 @@ DINE INSTRUKSJONER:
 """
 
 # ==========================================
-# 6. CHAT-VISNING (MED GAMMEL TITTEL)
+# 6. CHAT-VISNING
 # ==========================================
-# Her er endringen: Vi bruker den direkte tittelen igjen!
 st.title(f"Forklar '{begrep}' til {elev_navn} ({trinn_tekst})")
 
 if "messages" not in st.session_state:
@@ -172,25 +172,23 @@ if prompt := st.chat_input(f"Snakk til {elev_navn}..."):
             else: st.warning(feil)
 
 # ==========================================
-# 7. VEILEDER
+# 7. VEILEDER (NÅ MED EKSTERN FIL!)
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
-    with st.chat_message("assistant", avatar="📝"):
-        st.subheader("Pedagogisk Vurdering (LK20)")
-        with st.spinner(f"Veileder ser på samtalen med {elev_navn}..."):
+    with st.chat_message("assistant", avatar="🧐"):
+        st.subheader("Pedagogisk Analyse")
+        with st.spinner(f"Analyserer didaktikken i samtalen med {elev_navn}..."):
             
-            veileder_instruks = f"""
-            Du er praksisveileder. Analyser samtalen basert på **LK20**.
-            Eleven heter {elev_navn} og går på {trinn_tekst}. Tema: {begrep}.
-            Vurder nivåtilpasning og progresjon. Vær kort.
-            """
+            # --- HER HENTER VI INSTRUKSEN FRA DEN NYE FILEN ---
+            veileder_instruks = hent_veileder_instruks(elev_navn, trinn_tekst, begrep)
+            # --------------------------------------------------
             
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
             try:
                 veileder_model = genai.GenerativeModel(model_name=valgt_modell, system_instruction=veileder_instruks)
-                analyse = veileder_model.generate_content(f"Logg:\n{logg}")
+                analyse = veileder_model.generate_content(f"Her er transkripsjonen av undervisningen:\n{logg}")
                 st.markdown(analyse.text)
             except Exception as e:
                 st.warning("Kunne ikke kjøre veileder.")
