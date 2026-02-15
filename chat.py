@@ -28,19 +28,20 @@ with st.sidebar:
     
     if st.button("Nullstill samtale", use_container_width=True):
         st.session_state.messages = []
-        st.session_state.veiledning = None # Nullstiller veilederen også
+        st.session_state.veiledning = None
+        st.session_state.be_om_veiledning = False
         st.rerun()
 
     st.divider()
     
-    # --- HER ER VEILEDEREN TILBAKE ---
+    # --- VEILEDER ---
     st.subheader("👩‍🏫 Pedagogisk Veileder")
     st.info("Når du er ferdig med forklaringen, trykk her for å få en vurdering.")
     
     if st.button("Gi meg tilbakemelding", type="primary", use_container_width=True):
         st.session_state.be_om_veiledning = True
 
-    # Vis kunnskapsdata (for debugging/info)
+    # Vis kunnskapsdata (debug)
     with st.expander("Se elevens forutsetninger"):
         data = hent_kunnskapsprofil(trinn)
         st.caption(f"**Kan fra før:** {data['kjent']}")
@@ -110,7 +111,7 @@ if prompt := st.chat_input("Skriv din forklaring..."):
             st.error(f"Feil: {e}")
 
 # ==========================================
-# 5. VEILEDER-LOGIKK (KJØRER ETTER KNAPPETRYKK)
+# 5. VEILEDER-LOGIKK (RETTET)
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
@@ -118,7 +119,6 @@ if st.session_state.get("be_om_veiledning", False):
         st.subheader("Pedagogisk Vurdering")
         with st.spinner("Analyserer samtalen din..."):
             
-            # Vi lager en ny instruks for "sensoren"
             veileder_instruks = f"""
             Du er en erfaren praksisveileder i lærerutdanningen.
             Analyser samtalen over mellom en lærerstudent og en simulert elev på {trinn}.
@@ -132,5 +132,25 @@ if st.session_state.get("be_om_veiledning", False):
             Gi en kort oppsummering og et tips til neste gang.
             """
             
-            # Samler hele samtalen i én tekststreng
-            samtale_tekst = "\n".join([f"{m['role']}: {
+            # Her samler vi teksten på en trygg måte for å unngå SyntaxError
+            logg_liste = []
+            for m in st.session_state.messages:
+                logg_liste.append(f"{m['role']}: {m['content']}")
+            
+            samtale_tekst = "\n".join(logg_liste)
+            
+            try:
+                # Bruker samme modell, men med ny "hatt" (instruks)
+                veileder_model = genai.GenerativeModel(
+                    model_name="gemini-2.5-flash", 
+                    system_instruction=veileder_instruks
+                )
+                
+                analyse = veileder_model.generate_content(f"Her er loggen:\n{samtale_tekst}")
+                st.markdown(analyse.text)
+                
+            except Exception as e:
+                st.error(f"Veilederen kunne ikke nås: {e}")
+    
+    # Nullstill knappen
+    st.session_state.be_om_veiledning = False
