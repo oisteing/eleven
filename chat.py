@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+import time
 from lk20_data import hent_kunnskapsprofil 
 
 # ==========================================
@@ -10,14 +11,14 @@ try:
         api_key = st.secrets["GOOGLE_API_KEY"]
         genai.configure(api_key=api_key)
     else:
-        st.error("Mangler API-nøkkel i .streamlit/secrets.toml")
+        st.error("Mangler API-nøkkel i .streamlit/secrets.toml eller Streamlit Cloud secrets.")
 except Exception as e:
     st.error(f"Feil ved oppstart: {e}")
 
 st.set_page_config(page_title="LK20-Simulator", layout="wide")
 
 # ==========================================
-# 2. SIDEBAR MED VEILEDER
+# 2. SIDEBAR
 # ==========================================
 with st.sidebar:
     st.header("Innstillinger")
@@ -36,12 +37,12 @@ with st.sidebar:
     
     # --- VEILEDER ---
     st.subheader("👩‍🏫 Pedagogisk Veileder")
-    st.info("Når du er ferdig med forklaringen, trykk her for å få en vurdering.")
+    st.info("Ferdig med å forklare? Få tilbakemelding her.")
     
     if st.button("Gi meg tilbakemelding", type="primary", use_container_width=True):
         st.session_state.be_om_veiledning = True
 
-    # Vis kunnskapsdata (debug)
+    # Vis kunnskapsdata
     with st.expander("Se elevens forutsetninger"):
         data = hent_kunnskapsprofil(trinn)
         st.caption(f"**Kan fra før:** {data['kjent']}")
@@ -69,7 +70,35 @@ REGLER:
 """
 
 # ==========================================
-# 4. CHAT-GRENSESNITT
+# 4. HJELPEFUNKSJON FOR AI-SVAR (PLAN A)
+# ==========================================
+def get_ai_response(prompt, history, instruction):
+    """
+    Prøver først Flash (høy kvote). Hvis den feiler, prøver Pro.
+    """
+    modeller_aa_prove = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    
+    for modell_navn in modeller_aa_prove:
+        try:
+            model = genai.GenerativeModel(
+                model_name=modell_navn, 
+                system_instruction=instruction
+            )
+            chat = model.start_chat(history=history)
+            response = chat.send_message(prompt)
+            return response.text
+            
+        except Exception as e:
+            feilmelding = str(e)
+            if "429" in feilmelding:
+                return "⚠️ Kvote overskredet. Prøv igjen om litt."
+            # Hvis det er 404 (modell finnes ikke), prøver vi neste i loopen
+            continue
+            
+    return "Beklager, klarte ikke koble til noen av AI-modellene akkurat nå."
+
+# ==========================================
+# 5. CHAT-GRENSESNITT
 # ==========================================
 st.title(f"Forklar '{begrep}' til en elev på {trinn}")
 
@@ -91,27 +120,18 @@ if prompt := st.chat_input("Skriv din forklaring..."):
 
     # Generer elevens svar
     with st.chat_message("assistant", avatar="🧒"):
-        try:
-            model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash", 
-                system_instruction=system_instruks_elev
-            )
-            
-            # Konverter historikk
-            history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} 
-                       for m in st.session_state.messages[:-1]]
-            
-            chat = model.start_chat(history=history)
-            response = chat.send_message(prompt)
-            
-            st.markdown(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-            
-        except Exception as e:
-            st.error(f"Feil: {e}")
+        # Konverter historikk
+        gemini_history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} 
+                          for m in st.session_state.messages[:-1]]
+        
+        # Kall hjelpefunksjonen vår
+        svar_tekst = get_ai_response(prompt, gemini_history, system_instruks_elev)
+        
+        st.markdown(svar_tekst)
+        st.session_state.messages.append({"role": "assistant", "content": svar_tekst})
 
 # ==========================================
-# 5. VEILEDER-LOGIKK (RETTET)
+# 6. VEILEDER-LOGIKK
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
@@ -132,25 +152,12 @@ if st.session_state.get("be_om_veiledning", False):
             Gi en kort oppsummering og et tips til neste gang.
             """
             
-            # Her samler vi teksten på en trygg måte for å unngå SyntaxError
-            logg_liste = []
-            for m in st.session_state.messages:
-                logg_liste.append(f"{m['role']}: {m['content']}")
-            
+            # Samle logg
+            logg_liste = [f"{m['role']}: {m['content']}" for m in st.session_state.messages]
             samtale_tekst = "\n".join(logg_liste)
             
-            try:
-                # Bruker samme modell, men med ny "hatt" (instruks)
-                veileder_model = genai.GenerativeModel(
-                    model_name="gemini-2.5-flash", 
-                    system_instruction=veileder_instruks
-                )
-                
-                analyse = veileder_model.generate_content(f"Her er loggen:\n{samtale_tekst}")
-                st.markdown(analyse.text)
-                
-            except Exception as e:
-                st.error(f"Veilederen kunne ikke nås: {e}")
+            # Bruk samme hjelpefunksjon (fallback-logikk) for veilederen
+            analyse = get_ai_response(f"Her er loggen:\n{samtale_tekst}", [], veileder_instruks)
+            st.markdown(analyse)
     
-    # Nullstill knappen
     st.session_state.be_om_veiledning = False
