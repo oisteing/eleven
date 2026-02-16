@@ -1,7 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import random
-# HER IMPORTERER VI DEN NYE FILEN:
+# Husk at vi fremdeles bruker den nye pedagogikk-filen din:
 from pedagogikk import hent_veileder_instruks 
 
 # ==========================================
@@ -97,32 +97,33 @@ with st.sidebar:
         st.session_state.be_om_veiledning = True
 
 # ==========================================
-# 5. HJERNE (SYSTEM PROMPT - ELEV)
+# 5. HJERNE (SYSTEM PROMPT - STRENGTHENED)
 # ==========================================
 elev_navn = st.session_state.elev_navn
 trinn_tekst = f"{trinn_valg}. trinn"
 
-# (Du kan også flytte denne til pedagogikk.py hvis du vil ha det enda ryddigere!)
+# HER ER ENDRINGEN: Mye strengere instruks mot "lekkasje"
 system_instruks_elev = f"""
+VIKTIG: DU ER I ROLLE NÅ. IKKE bryt karakteren.
+
 DIN ROLLE:
-Du heter {elev_navn}.
-Du er en elev i norsk grunnskole på {trinn_tekst}.
-Tema: '{begrep}'.
+Navn: {elev_navn}.
+Alder: {trinn_valg + 6} år (Går i {trinn_tekst}).
+Tema vi snakker om: '{begrep}'.
 
-DIN KUNNSKAP (LK20):
-Du baserer alt du kan på **Læreplan i matematikk (MAT01-05)**.
-- Du KAN kompetansemål opp til {trinn_valg - 1}. trinn.
-- Du LÆRER kompetansemål for {trinn_tekst} (vær litt usikker her).
-- Du KAN IKKE stoff fra {trinn_valg + 1}. trinn eller oppover.
+DIN HUKOMMELSE:
+Du husker ting fra lavere trinn, men du aner ikke hva "LK20", "kompetansemål" eller "læreplan" er. Det er lærerspråk.
 
-DINE INSTRUKSJONER:
-1. Du reagerer på navnet ditt ({elev_navn}).
-2. Du vet IKKE hva '{begrep}' er med mindre det er pensum på lavere trinn.
-3. **Vær passiv:** Ikke driv samtalen. Læreren må jobbe.
-4. **Ikke still "sosiale" spørsmål** ("Hva synes du?", "Liker du matte?").
-5. **Ikke forklar tilbake.**
-6. Hvis læreren bruker ord fra høyere trinn, spør: "Hva betyr det?".
-7. Snakk som en på {trinn_valg}. trinn.
+REGLER FOR OPPFØRSEL:
+1. Hvis læreren spør "Hva kan du om {begrep}?", skal du svare VAGT og ENKELT.
+   - RIKTIG: "Vi hadde litt om det i fjor, men jeg husker ikke helt." eller "Er det det med pizza?"
+   - FEIL: "I henhold til instruksen min kan jeg målene for 4. trinn." (ALDRI SI DETTE!)
+   - FEIL: "Jeg baserer kunnskapen min på MAT01-05."
+2. Du skal aldri vise din "indre tenkning" eller forklare hvorfor du svarer som du gjør. Bare gi svaret.
+3. Vær litt passiv/usikker. Ikke hold foredrag.
+4. Snakk som et barn/ungdom på {trinn_tekst}. Korte setninger.
+
+START NÅ. VÆR {elev_navn}.
 """
 
 # ==========================================
@@ -172,7 +173,7 @@ if prompt := st.chat_input(f"Snakk til {elev_navn}..."):
             else: st.warning(feil)
 
 # ==========================================
-# 7. VEILEDER (NÅ MED EKSTERN FIL!)
+# 7. VEILEDER (HENTER FRA PEDAGOGIKK.PY)
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
@@ -180,9 +181,8 @@ if st.session_state.get("be_om_veiledning", False):
         st.subheader("Pedagogisk Analyse")
         with st.spinner(f"Analyserer didaktikken i samtalen med {elev_navn}..."):
             
-            # --- HER HENTER VI INSTRUKSEN FRA DEN NYE FILEN ---
+            # Henter den avanserte instruksen fra den andre filen din
             veileder_instruks = hent_veileder_instruks(elev_navn, trinn_tekst, begrep)
-            # --------------------------------------------------
             
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
