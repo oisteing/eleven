@@ -1,7 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import random
-# Husk at vi fremdeles bruker den nye pedagogikk-filen din:
+import time
 from pedagogikk import hent_veileder_instruks 
 
 # ==========================================
@@ -32,19 +32,45 @@ def tilfeldig_navn():
     return random.choice(navn_liste)
 
 # ==========================================
-# 3. MODELL-LISTE
+# 3. SMART MODELL-VELGER (RESERVEMOTOR)
 # ==========================================
-@st.cache_data
-def hent_alle_modeller():
-    try:
-        alle = genai.list_models()
-        tilgjengelige = [m.name for m in alle if 'generateContent' in m.supported_generation_methods]
-        if not tilgjengelige: return ["models/gemini-1.5-flash"]
-        return tilgjengelige
-    except:
-        return ["models/gemini-1.5-flash"]
+def generer_svar_med_fallback(prompt, history, system_instruks):
+    """
+    Prøver en liste med modeller etter tur. 
+    Hvis én er full eller nede, prøver den neste automatisk.
+    """
+    # Dette er prioriteringslisten over modeller med best kvote akkurat nå:
+    modeller_aa_prove = [
+        "gemini-2.0-flash-lite-preview-02-05", # Ny, rask og høy kvote
+        "gemini-2.0-flash",                    # Standard ny modell
+        "gemini-1.5-flash",                    # Den gamle arbeidshesten
+        "gemini-1.5-flash-8b",                 # Super-lettvekter (backup)
+    ]
 
-mine_modeller = hent_alle_modeller()
+    siste_feil = ""
+
+    for modell_navn in modeller_aa_prove:
+        try:
+            # Prøver å koble til modellen
+            model = genai.GenerativeModel(
+                model_name=modell_navn, 
+                system_instruction=system_instruks
+            )
+            
+            chat = model.start_chat(history=history)
+            response = chat.send_message(prompt)
+            
+            # Hvis vi kommer hit, virket det! Returner svaret.
+            return response.text, modell_navn
+            
+        except Exception as e:
+            # Hvis det feilet, lagre feilen og prøv neste i listen
+            siste_feil = str(e)
+            time.sleep(1) # Vent litt før neste forsøk
+            continue
+    
+    # Hvis ALLE feilet:
+    return f"Beklager, alle AI-modellene er opptatt akkurat nå. Feil: {siste_feil}", "Ingen"
 
 # ==========================================
 # 4. SIDEBAR & TILSTAND
@@ -58,7 +84,7 @@ if "last_begrep" not in st.session_state:
 
 with st.sidebar:
     st.header("🔧 Innstillinger")
-    valgt_modell = st.selectbox("Aktiv AI-modell:", mine_modeller)
+    st.caption("Systemet velger automatisk den beste tilgjengelige modellen (Flash Lite / Flash 1.5).")
     
     st.divider()
     st.header("🎓 Oppgave (LK20)")
@@ -97,12 +123,11 @@ with st.sidebar:
         st.session_state.be_om_veiledning = True
 
 # ==========================================
-# 5. HJERNE (SYSTEM PROMPT - STRENGTHENED)
+# 5. HJERNE (SYSTEM PROMPT)
 # ==========================================
 elev_navn = st.session_state.elev_navn
 trinn_tekst = f"{trinn_valg}. trinn"
 
-# HER ER ENDRINGEN: Mye strengere instruks mot "lekkasje"
 system_instruks_elev = f"""
 VIKTIG: DU ER I ROLLE NÅ. IKKE bryt karakteren.
 
@@ -117,8 +142,7 @@ Du husker ting fra lavere trinn, men du aner ikke hva "LK20", "kompetansemål" e
 REGLER FOR OPPFØRSEL:
 1. Hvis læreren spør "Hva kan du om {begrep}?", skal du svare VAGT og ENKELT.
    - RIKTIG: "Vi hadde litt om det i fjor, men jeg husker ikke helt." eller "Er det det med pizza?"
-   - FEIL: "I henhold til instruksen min kan jeg målene for 4. trinn." (ALDRI SI DETTE!)
-   - FEIL: "Jeg baserer kunnskapen min på MAT01-05."
+   - FEIL: "I henhold til instruksen min kan jeg målene for 4. trinn."
 2. Du skal aldri vise din "indre tenkning" eller forklare hvorfor du svarer som du gjør. Bare gi svaret.
 3. Vær litt passiv/usikker. Ikke hold foredrag.
 4. Snakk som et barn/ungdom på {trinn_tekst}. Korte setninger.
@@ -149,31 +173,23 @@ if prompt := st.chat_input(f"Snakk til {elev_navn}..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant", avatar="🧒"):
-        try:
-            model = genai.GenerativeModel(
-                model_name=valgt_modell, 
-                system_instruction=system_instruks_elev
-            )
-            
-            history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} 
-                       for m in st.session_state.messages[:-1]]
-            
-            chat = model.start_chat(history=history)
-            response = chat.send_message(prompt)
-            
-            st.write(f"**🧒 {elev_navn}**")
-            st.markdown(response.text)
-            st.session_state.messages.append({"role": "assistant", "content": response.text})
-            
-        except Exception as e:
-            feil = str(e)
-            st.error("Noe gikk galt med AI-en.")
-            if "429" in feil: st.warning("Kvote full. Bytt modell i menyen.")
-            elif "404" in feil: st.warning("Modellen finnes ikke. Prøv en annen.")
-            else: st.warning(feil)
+        # Konverter historikk
+        history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} 
+                   for m in st.session_state.messages[:-1]]
+        
+        # --- HER BRUKER VI DEN NYE FALLBACK-FUNKSJONEN ---
+        with st.spinner(f"{elev_navn} tenker..."):
+            svar_tekst, brukt_modell = generer_svar_med_fallback(prompt, history, system_instruks_elev)
+        
+        # (Valgfritt: Vis hvilken modell som ble brukt i en liten notis for debugging)
+        # st.caption(f"Teknisk info: Svar generert av {brukt_modell}")
+
+        st.write(f"**🧒 {elev_navn}**")
+        st.markdown(svar_tekst)
+        st.session_state.messages.append({"role": "assistant", "content": svar_tekst})
 
 # ==========================================
-# 7. VEILEDER (HENTER FRA PEDAGOGIKK.PY)
+# 7. VEILEDER (MED FALLBACK)
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
@@ -181,16 +197,12 @@ if st.session_state.get("be_om_veiledning", False):
         st.subheader("Pedagogisk Analyse")
         with st.spinner(f"Analyserer didaktikken i samtalen med {elev_navn}..."):
             
-            # Henter den avanserte instruksen fra den andre filen din
             veileder_instruks = hent_veileder_instruks(elev_navn, trinn_tekst, begrep)
-            
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
-            try:
-                veileder_model = genai.GenerativeModel(model_name=valgt_modell, system_instruction=veileder_instruks)
-                analyse = veileder_model.generate_content(f"Her er transkripsjonen av undervisningen:\n{logg}")
-                st.markdown(analyse.text)
-            except Exception as e:
-                st.warning("Kunne ikke kjøre veileder.")
+            # Bruker også fallback-funksjonen for veilederen!
+            analyse, _ = generer_svar_med_fallback(f"Her er loggen:\n{logg}", [], veileder_instruks)
+            
+            st.markdown(analyse)
     
     st.session_state.be_om_veiledning = False
