@@ -32,45 +32,60 @@ def tilfeldig_navn():
     return random.choice(navn_liste)
 
 # ==========================================
-# 3. SMART MODELL-VELGER (RESERVEMOTOR)
+# 3. DYNAMISK MODELL-FINNER (AUTOPILOT)
 # ==========================================
+@st.cache_data
+def finn_og_sorter_modeller():
+    """
+    Henter faktiske modeller fra din konto og sorterer dem smart:
+    1. Flash Lite (Best kvote)
+    2. Flash (Standard)
+    3. Pro (Smartest)
+    """
+    try:
+        alle = genai.list_models()
+        # Vi vil bare ha de som kan lage tekst (generateContent)
+        kandidater = [m.name for m in alle if 'generateContent' in m.supported_generation_methods]
+        
+        # Sorterings-funksjon: Jo lavere tall, jo høyere prioritet
+        def prioritet(navn):
+            navn = navn.lower()
+            if "lite" in navn: return 1       # Gull: Flash Lite (Mest robust kvote)
+            if "flash" in navn: return 2      # Sølv: Vanlig Flash
+            if "pro" in navn: return 3        # Bronse: Pro
+            return 4                          # Resten
+            
+        kandidater.sort(key=prioritet)
+        return kandidater
+        
+    except Exception as e:
+        # Krise-løsning hvis vi ikke får hentet listen
+        return ["models/gemini-1.5-flash", "models/gemini-2.0-flash-lite"]
+
+# Vi henter listen én gang når appen starter
+MINE_MODELLER = finn_og_sorter_modeller()
+
 def generer_svar_med_fallback(prompt, history, system_instruks):
-    """
-    Prøver en liste med modeller etter tur. 
-    Hvis én er full eller nede, prøver den neste automatisk.
-    """
-    # Dette er prioriteringslisten over modeller med best kvote akkurat nå:
-    modeller_aa_prove = [
-        "gemini-2.0-flash-lite-preview-02-05", # Ny, rask og høy kvote
-        "gemini-2.0-flash",                    # Standard ny modell
-        "gemini-1.5-flash",                    # Den gamle arbeidshesten
-        "gemini-1.5-flash-8b",                 # Super-lettvekter (backup)
-    ]
-
+    """Prøver modellene i den prioriterte rekkefølgen."""
     siste_feil = ""
-
-    for modell_navn in modeller_aa_prove:
+    
+    # Vi bruker listen vi fant over
+    for modell_navn in MINE_MODELLER:
         try:
-            # Prøver å koble til modellen
             model = genai.GenerativeModel(
                 model_name=modell_navn, 
                 system_instruction=system_instruks
             )
-            
             chat = model.start_chat(history=history)
             response = chat.send_message(prompt)
-            
-            # Hvis vi kommer hit, virket det! Returner svaret.
-            return response.text, modell_navn
+            return response.text, modell_navn # Suksess!
             
         except Exception as e:
-            # Hvis det feilet, lagre feilen og prøv neste i listen
             siste_feil = str(e)
-            time.sleep(1) # Vent litt før neste forsøk
+            # Hvis kvoten er full (429) eller modellen ikke finnes (404), prøv neste!
             continue
-    
-    # Hvis ALLE feilet:
-    return f"Beklager, alle AI-modellene er opptatt akkurat nå. Feil: {siste_feil}", "Ingen"
+            
+    return f"Beklager, alle modellene feilet. Siste feil: {siste_feil}", "Ingen"
 
 # ==========================================
 # 4. SIDEBAR & TILSTAND
@@ -84,7 +99,14 @@ if "last_begrep" not in st.session_state:
 
 with st.sidebar:
     st.header("🔧 Innstillinger")
-    st.caption("Systemet velger automatisk den beste tilgjengelige modellen (Flash Lite / Flash 1.5).")
+    # Viser brukeren hvilke modeller som ble funnet (for info)
+    if MINE_MODELLER:
+        beste_modell = MINE_MODELLER[0].split("/")[-1]
+        st.success(f"Autopilot aktiv: Starter med **{beste_modell}**")
+        with st.expander("Se alle dine modeller"):
+            st.write(MINE_MODELLER)
+    else:
+        st.error("Fant ingen modeller. Sjekk API-nøkkel.")
     
     st.divider()
     st.header("🎓 Oppgave (LK20)")
@@ -173,23 +195,22 @@ if prompt := st.chat_input(f"Snakk til {elev_navn}..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant", avatar="🧒"):
-        # Konverter historikk
         history = [{"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]} 
                    for m in st.session_state.messages[:-1]]
         
-        # --- HER BRUKER VI DEN NYE FALLBACK-FUNKSJONEN ---
         with st.spinner(f"{elev_navn} tenker..."):
+            # Her skjer magien: Den prøver alle dine tilgjengelige modeller
             svar_tekst, brukt_modell = generer_svar_med_fallback(prompt, history, system_instruks_elev)
         
-        # (Valgfritt: Vis hvilken modell som ble brukt i en liten notis for debugging)
-        # st.caption(f"Teknisk info: Svar generert av {brukt_modell}")
+        # Debug-info (vises kun hvis du holder musen over):
+        # st.toast(f"Brukte modell: {brukt_modell}")
 
         st.write(f"**🧒 {elev_navn}**")
         st.markdown(svar_tekst)
         st.session_state.messages.append({"role": "assistant", "content": svar_tekst})
 
 # ==========================================
-# 7. VEILEDER (MED FALLBACK)
+# 7. VEILEDER
 # ==========================================
 if st.session_state.get("be_om_veiledning", False):
     st.divider()
@@ -200,9 +221,7 @@ if st.session_state.get("be_om_veiledning", False):
             veileder_instruks = hent_veileder_instruks(elev_navn, trinn_tekst, begrep)
             logg = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
             
-            # Bruker også fallback-funksjonen for veilederen!
             analyse, _ = generer_svar_med_fallback(f"Her er loggen:\n{logg}", [], veileder_instruks)
-            
             st.markdown(analyse)
     
     st.session_state.be_om_veiledning = False
